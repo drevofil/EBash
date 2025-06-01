@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="1.5.1"
+VERSION="1.7.0"
 
 # Проверка переменных окружения
 if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
@@ -63,7 +63,7 @@ fi
 
 # Получение имени команды
 COMMAND_NAME=$(basename "$1")
-START_MESSAGE="🚀 *Запущена команда:* \`$COMMAND_NAME\`
+START_MESSAGE="🚀 *Запущена команда (ebash v$VERSION):* \`$COMMAND_NAME\`
 🖥 *Хост:* \`$(hostname)\`
 📂 *Рабочий каталог:* \`$(pwd)\`
 🕒 *Время запуска:* $(date +"%Y-%m-%d %H:%M:%S %Z")"
@@ -73,7 +73,7 @@ send_telegram "$START_MESSAGE"
 # Обработка прерывания (Ctrl+C)
 interrupted() {
   echo -e "\n[ebash] Прервано пользователем (Ctrl+C)"
-  send_telegram "⏹ *Команда прервана:* \`$COMMAND_NAME\`
+  send_telegram "⏹ *Команда прервана (ebash v$VERSION):* \`$COMMAND_NAME\`
 🖥 *Хост:* \`$(hostname)\`
 🕒 *Время работы:* $((SECONDS)) сек"
   exit 130
@@ -84,8 +84,17 @@ trap interrupted SIGINT
 start_time=$(date +%s)
 set +e
 
-# Запуск команды с сохранением вывода
-"$@" 2>&1 | tee "$LOG_FILE"
+# Универсальное решение для всех команд
+{
+  # Для rsync используем специальную обработку
+  if [[ "$(basename "$1")" == "rsync" ]]; then
+    # Отключаем прогресс-бар для rsync
+    "$@" --no-progress 2>&1
+  else
+    "$@"
+  fi
+} | tee "$LOG_FILE"
+
 exit_code=${PIPESTATUS[0]}
 
 set -e
@@ -108,7 +117,7 @@ else
 fi
 
 # Основное сообщение
-MAIN_MESSAGE="$STATUS_EMOJI *Команда завершена:* \`$COMMAND_NAME\`
+MAIN_MESSAGE="$STATUS_EMOJI *Команда завершена (ebash v$VERSION):* \`$COMMAND_NAME\`
 ⌛ *Длительность:* $formatted_duration
 📋 *Статус:* $STATUS_TEXT
 🕒 *Время завершения:* $(date +"%Y-%m-%d %H:%M:%S %Z")
@@ -117,12 +126,13 @@ MAIN_MESSAGE="$STATUS_EMOJI *Команда завершена:* \`$COMMAND_NAME
 # Получаем логи из временного файла
 LOG_CONTENT=""
 if [ -s "$LOG_FILE" ]; then
-  # Для коротких выводов - весь лог
-  if [ $(wc -l < "$LOG_FILE") -le 20 ]; then
-    LOG_CONTENT=$(cat "$LOG_FILE")
-  else
-    # Для длинных выводов - начало и конец
-    LOG_CONTENT="$(head -n 10 "$LOG_FILE")\n...\n$(tail -n 10 "$LOG_FILE")"
+  # Всегда показываем последние 10 строк
+  LOG_CONTENT=$(tail -n 10 "$LOG_FILE" 2>/dev/null || cat "$LOG_FILE")
+  
+  # Для ошибок rsync добавляем дополнительный контекст
+  if [[ "$COMMAND_NAME" == "rsync" && $exit_code -ne 0 ]]; then
+    ERROR_LINE=$(grep -i "error\|fail\|warn" "$LOG_FILE" 2>/dev/null || head -n 1 "$LOG_FILE")
+    LOG_CONTENT="$ERROR_LINE\n$LOG_CONTENT"
   fi
 else
   LOG_CONTENT="(логи отсутствуют)"
@@ -135,7 +145,10 @@ FULL_MESSAGE="$MAIN_MESSAGE
 $LOG_CONTENT
 \`\`\`"
 
-# Отправляем сообщение (гарантированно)
-send_telegram "$FULL_MESSAGE" || send_telegram "$MAIN_MESSAGE"
+# Гарантированная отправка сообщения
+send_telegram "$FULL_MESSAGE" || {
+  # Если не удалось, отправляем только основное сообщение
+  send_telegram "$MAIN_MESSAGE"
+}
 
 exit $exit_code

@@ -2,7 +2,7 @@
 
 SCRIPT_NAME = ebash
 INSTALL_DIR = /usr/local/bin
-VERSION = 1.5.1
+VERSION = 1.7.0
 
 .PHONY: install uninstall
 
@@ -21,4 +21,9 @@ uninstall:
 		echo "$(SCRIPT_NAME) не найден в $(INSTALL_DIR)"; \
 	fi
 
-.PHONY: install uninstall
+test:
+	@echo "Запуск тестов"
+	chmod +x tests/test_runner.sh &&\
+	tests/test_runner.sh
+
+.PHONY: install uninstall test
