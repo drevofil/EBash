@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-# Версия скрипта
-VERSION="1.3.1"
+# Версия скрипта (должна совпадать с Makefile)
+VERSION="1.4.0"
 
 # Проверка переменных окружения
 if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
@@ -90,7 +90,7 @@ duration=$((end_time - start_time))
 # Форматируем длительность
 formatted_duration=$(printf "%02d:%02d:%02d" $((duration/3600)) $(((duration%3600)/60)) $((duration%60)))
 
-# Формируем статус
+# Определяем статус выполнения
 if [ $exit_code -eq 0 ]; then
   STATUS_EMOJI="✅"
   STATUS_TEXT="УСПЕШНО"
@@ -109,14 +109,20 @@ MAIN_MESSAGE="$STATUS_EMOJI *Скрипт завершен:* \`$COMMAND_NAME\`
 🕒 *Время завершения:* $(date +"%Y-%m-%d %H:%M:%S %Z")
 🔢 *Код выхода:* $exit_code"
 
-# Получаем логи ДО точки ошибки
+# Получаем релевантные логи
 LOG_CONTENT=""
-if [ $exit_code -ne 0 ]; then
-  # Для ошибок: берем логи до последней ошибки
-  LOG_CONTENT=$(grep -B 10 -i "error\|fail\|exception\|undefined\|not found\|no such file" "$LOG_FILE" 2>/dev/null | tail -n 20 || head -n 20 "$LOG_FILE")
+if [ $exit_code -eq 0 ]; then
+  # Для успешного выполнения: последние 5 строк
+  LOG_CONTENT=$(tail -n 5 "$LOG_FILE" 2>/dev/null || echo "(логи отсутствуют)")
 else
-  # Для успеха: последние 10 строк
-  LOG_CONTENT=$(tail -n 10 "$LOG_FILE" 2>/dev/null || echo "Логи недоступны")
+  # Для ошибок: последние 15 строк + контекст ошибки
+  ERROR_CONTEXT=$(grep -A 10 -B 5 -i "error\|fail\|exception\|undefined\|not found\|no such file" "$LOG_FILE" 2>/dev/null | head -n 30)
+  
+  if [ -n "$ERROR_CONTEXT" ]; then
+    LOG_CONTENT="$ERROR_CONTEXT"
+  else
+    LOG_CONTENT=$(tail -n 15 "$LOG_FILE" 2>/dev/null || echo "(не удалось получить логи)")
+  fi
 fi
 
 # Формируем полное сообщение
