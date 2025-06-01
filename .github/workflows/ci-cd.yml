@@ -28,8 +28,8 @@ jobs:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
         wget https://downloads.mongodb.com/compass/mongodb-mongosh_2.5.1_amd64.deb &&\
-        apt install ./mongodb-mongosh_2.5.1_amd64.deb &&\
-        apt install postgresql-client &&\
+        sudo apt install ./mongodb-mongosh_2.5.1_amd64.deb &&\
+        sudo apt install postgresql-client &&\
         make install &&\
         make test
 
