@@ -27,6 +27,7 @@ jobs:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_TEST_CHAT_ID }}
       run: |
+        make install &&\
         make test
 
   release:
