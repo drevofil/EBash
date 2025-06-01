@@ -1,28 +1,23 @@
 #!/bin/bash
 set -euo pipefail
 
-# Версия скрипта (должна совпадать с Makefile)
-VERSION="1.4.1"
+VERSION="1.5.1"
 
 # Проверка переменных окружения
 if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
   echo "Ошибка: задайте переменные TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID!" >&2
-  echo "Использование: export TELEGRAM_BOT_TOKEN='токен'" >&2
-  echo "           export TELEGRAM_CHAT_ID='идентификатор'" >&2
   exit 1
 fi
 
-# Проверка доступности cURL
 if ! command -v curl &> /dev/null; then
   echo "Ошибка: curl не установлен!" >&2
   exit 1
 fi
 
-# Проверка доступности Telegram API
+# Функция проверки API
 check_telegram_api() {
   if ! curl -s -f "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" > /dev/null; then
     echo "Ошибка: не удалось подключиться к Telegram API!" >&2
-    echo "Проверьте токен бота и доступность сети" >&2
     return 1
   fi
   return 0
@@ -31,12 +26,11 @@ check_telegram_api() {
 # Аргументы командной строки
 if [ $# -eq 0 ]; then
   echo "Telegram Script Notifier v$VERSION"
-  echo "Использование: $0 <script.sh> [аргументы...]" >&2
+  echo "Использование: $0 <command> [args...]" >&2
   echo "               $0 --version" >&2
   exit 1
 fi
 
-# Проверка версии
 if [ "$1" == "--version" ]; then
   echo "ebash v$VERSION"
   exit 0
@@ -46,22 +40,30 @@ fi
 LOG_FILE=$(mktemp)
 trap 'rm -f "$LOG_FILE"' EXIT
 
-# Функция отправки в Telegram
+# Улучшенная функция отправки в Telegram
 send_telegram() {
   local message="$1"
-  # Экранирование только обратных кавычек
+  # Экранирование только критичных символов
   message="${message//\`/\\\`}"
   
-  # Попытка отправки с игнорированием ошибок
-  curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+  # Упрощенная отправка с таймаутом
+  curl -s -m 10 -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
     -d "chat_id=${TELEGRAM_CHAT_ID}" \
     -d "text=$message" \
     -d "parse_mode=Markdown" >/dev/null || true
 }
 
+# Проверяем доступность API перед запуском
+if ! check_telegram_api; then
+  echo "Проверка API Telegram не удалась. Продолжение без отправки уведомлений." >&2
+  # Запускаем команду напрямую
+  "$@"
+  exit $?
+fi
+
 # Получение имени команды
 COMMAND_NAME=$(basename "$1")
-START_MESSAGE="🚀 *Запущен скрипт:* \`$COMMAND_NAME\`
+START_MESSAGE="🚀 *Запущена команда:* \`$COMMAND_NAME\`
 🖥 *Хост:* \`$(hostname)\`
 📂 *Рабочий каталог:* \`$(pwd)\`
 🕒 *Время запуска:* $(date +"%Y-%m-%d %H:%M:%S %Z")"
@@ -71,18 +73,21 @@ send_telegram "$START_MESSAGE"
 # Обработка прерывания (Ctrl+C)
 interrupted() {
   echo -e "\n[ebash] Прервано пользователем (Ctrl+C)"
-  send_telegram "⏹ *Скрипт прерван:* \`$COMMAND_NAME\`
+  send_telegram "⏹ *Команда прервана:* \`$COMMAND_NAME\`
 🖥 *Хост:* \`$(hostname)\`
 🕒 *Время работы:* $((SECONDS)) сек"
   exit 130
 }
 trap interrupted SIGINT
 
-# Запускаем скрипт с перехватом вывода
+# Запускаем команду с перехватом вывода
 start_time=$(date +%s)
 set +e
+
+# Запуск команды с сохранением вывода
 "$@" 2>&1 | tee "$LOG_FILE"
 exit_code=${PIPESTATUS[0]}
+
 set -e
 end_time=$(date +%s)
 duration=$((end_time - start_time))
@@ -103,39 +108,34 @@ else
 fi
 
 # Основное сообщение
-MAIN_MESSAGE="$STATUS_EMOJI *Скрипт завершен:* \`$COMMAND_NAME\`
+MAIN_MESSAGE="$STATUS_EMOJI *Команда завершена:* \`$COMMAND_NAME\`
 ⌛ *Длительность:* $formatted_duration
 📋 *Статус:* $STATUS_TEXT
 🕒 *Время завершения:* $(date +"%Y-%m-%d %H:%M:%S %Z")
 🔢 *Код выхода:* $exit_code"
 
-# Получаем релевантные логи
-LOG_CONTENT="(Логов нет)"
-if [ $exit_code -eq 0 ]; then
-  # Для успешного выполнения: последние 5 строк
-  LOG_CONTENT=$(tail -n 5 "$LOG_FILE" 2>/dev/null || echo "(логи отсутствуют)")
-else
-  # Для ошибок: последние 15 строк + контекст ошибки
-  ERROR_CONTEXT=$(grep -A 10 -B 5 -i "error\|fail\|exception\|undefined\|not found\|no such file" "$LOG_FILE" 2>/dev/null | head -n 30)
-  
-  if [ -n "$ERROR_CONTEXT" ]; then
-    LOG_CONTENT="$ERROR_CONTEXT"
+# Получаем логи из временного файла
+LOG_CONTENT=""
+if [ -s "$LOG_FILE" ]; then
+  # Для коротких выводов - весь лог
+  if [ $(wc -l < "$LOG_FILE") -le 20 ]; then
+    LOG_CONTENT=$(cat "$LOG_FILE")
   else
-    LOG_CONTENT=$(tail -n 15 "$LOG_FILE" 2>/dev/null || echo "(не удалось получить логи)")
+    # Для длинных выводов - начало и конец
+    LOG_CONTENT="$(head -n 10 "$LOG_FILE")\n...\n$(tail -n 10 "$LOG_FILE")"
   fi
+else
+  LOG_CONTENT="(логи отсутствуют)"
 fi
 
-# Формируем полное сообщение
+# Форматируем полное сообщение
 FULL_MESSAGE="$MAIN_MESSAGE
-📝 *Логи:*
+📝 *Вывод команды:*
 \`\`\`
 $LOG_CONTENT
 \`\`\`"
 
-# Отправляем сообщение
-send_telegram "$FULL_MESSAGE" || {
-  # Если не удалось, отправляем только основное сообщение
-  send_telegram "$MAIN_MESSAGE"
-}
+# Отправляем сообщение (гарантированно)
+send_telegram "$FULL_MESSAGE" || send_telegram "$MAIN_MESSAGE"
 
 exit $exit_code
