@@ -11,6 +11,8 @@ services:
       interval: 2s
       timeout: 5s
       retries: 10
+    ports:
+      - 5432:5432
 
   mongo:
     image: mongo:5.0
@@ -19,3 +21,5 @@ services:
       interval: 2s
       timeout: 5s
       retries: 10
+    ports:
+      - 27017:27017
