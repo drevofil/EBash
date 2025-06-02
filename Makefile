@@ -2,7 +2,7 @@
 
 SCRIPT_NAME = ebash
 INSTALL_DIR = /usr/local/bin
-VERSION = 1.7.0
+VERSION = 1.7.2
 
 .PHONY: install uninstall
 

@@ -1,7 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="1.7.0"
+VERSION="1.7.2"
+
+if [ "$1" == "--version" ]; then
+  echo "ebash v$VERSION"
+  exit 0
+fi
 
 # Проверка переменных окружения
 if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
@@ -31,11 +36,6 @@ if [ $# -eq 0 ]; then
   exit 1
 fi
 
-if [ "$1" == "--version" ]; then
-  echo "ebash v$VERSION"
-  exit 0
-fi
-
 # Временный файл лога
 LOG_FILE=$(mktemp)
 trap 'rm -f "$LOG_FILE"' EXIT
@@ -46,11 +46,48 @@ send_telegram() {
   # Экранирование только критичных символов
   message="${message//\`/\\\`}"
   
-  # Упрощенная отправка с таймаутом
-  curl -s -m 10 -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-    -d "chat_id=${TELEGRAM_CHAT_ID}" \
-    -d "text=$message" \
-    -d "parse_mode=Markdown" >/dev/null || true
+  local max_retries=3
+  local delay=2
+  local attempt=0
+  local success=0
+  local response
+  local http_code
+  local json_response
+
+  while [ $attempt -lt $max_retries ]; do
+    # Сохраняем ответ вместе с HTTP-кодом
+    response=$(curl -s -m 10 -w "\n%{http_code}" -X POST \
+      "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+      -d "chat_id=${TELEGRAM_CHAT_ID}" \
+      -d "text=$message" \
+      -d "parse_mode=Markdown" 2>> "$LOG_FILE")
+    
+    # Извлекаем HTTP-код из последней строки
+    http_code=$(echo "$response" | tail -n1)
+    # Тело ответа (без HTTP-кода)
+    json_response=$(echo "$response" | sed '$d')
+    
+    if [ "$http_code" -eq 200 ]; then
+      success=1
+      break
+    else
+      # Логируем ошибку
+      echo "Попытка $((attempt+1)) не удалась. HTTP: $http_code" >> "$LOG_FILE"
+      echo "Ответ: $json_response" >> "$LOG_FILE"
+      sleep $delay
+      attempt=$((attempt+1))
+      delay=$((delay*2))
+    fi
+  done
+
+  if [ $success -eq 0 ]; then
+    echo "Ошибка: не удалось отправить сообщение в Telegram после $max_retries попыток" >&2
+    echo "Последний ответ: HTTP $http_code" >&2
+    echo "$json_response" | jq . >&2 2>/dev/null || echo "$json_response" >&2
+    return 1
+  fi
+  
+  return 0
 }
 
 # Проверяем доступность API перед запуском
@@ -83,12 +120,9 @@ trap interrupted SIGINT
 # Запускаем команду с перехватом вывода
 start_time=$(date +%s)
 set +e
-
 # Универсальное решение для всех команд
 {
-  # Для rsync используем специальную обработку
   if [[ "$(basename "$1")" == "rsync" ]]; then
-    # Отключаем прогресс-бар для rsync
     "$@" --no-progress 2>&1
   else
     "$@"
