@@ -2,7 +2,7 @@
 
 SCRIPT_NAME = ebash
 INSTALL_DIR = /usr/local/bin
-VERSION = 1.7.2
+VERSION = 1.8.0
 
 .PHONY: install uninstall
 
@@ -25,5 +25,9 @@ test:
 	@echo "Запуск тестов"
 	chmod +x tests/test_runner.sh &&\
 	tests/test_runner.sh
+
+clean:
+	@echo "Очистка результатов тестов"
+	rm *.log
 
 .PHONY: install uninstall test
